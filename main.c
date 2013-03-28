@@ -1,14 +1,12 @@
-#include <EVB.h>
+#include "EVB.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+#define likely(x)   __builtin_expect(!!(x),1)
+#define __unused__    __attribute__ ((unused))
 #define INLINE __attribute__((always_inline))
 #define MAX_UINT16 (65435)
-
-typedef int32 long
-typedef uint16 unsigned int
-typedef int16 int
-typedef uint8 unsigned 
 
 static volatile bool new_speed;
 
@@ -16,7 +14,7 @@ static uint8 actual_speed;
 static uint8 prev_error;
 
 static uint8 lost_side;
-static uint8 lost_track;
+static bool lost_track;
 
 static const int16 DEFAULT_GAIN = 3;
 
@@ -26,24 +24,24 @@ static const uint16 LIM_RIGHT = 3245;
 static const uint16 LIM_CENTER = 2675;
 
 
-static bool
-pushbutton_enabled(void) INLINE
+static bool INLINE __unused__
+pushbutton_enabled(void)
 {
 	if (_H11PORTA & 0x01)
 		return true;
 	return false;
 }
 
-static bool
-slideswitch_enabled(void) INLINE
+static bool INLINE
+slideswitch_enabled(void)
 {
 	if (_H11PORTA & 0x04)
 		return true;
 	return false;
 }
 
-static bool
-standby_mode(void) INLINE
+static bool INLINE
+standby_mode(void)
 {
 	return !slideswitch_enabled();
 }
@@ -61,31 +59,6 @@ standby(void)
 	_H11OC1M = 0x18;	/* TOC1 affects PA3 and PA4 */
 }
 
-static void
-init(void)
-{
-	_H11OC1M = 0x18;	/* TOC1 affects PA3 and PA4 */
-	_H11OC1D = 0x18;	/* TOC1 sets PA3 and PA4	*/
-	_H11TOC1 = 0x00;	/* TOC1 occurs when _H11TCNT equals zero */
-
-	_H11TCTL1 = 0x0A;	/* TOC5 clears PA3, TOC4 clears PA4 */
-
-	// Get port C set for all output, and set the drive motor to forward.
-	_H11DDRC  = 0xFF;
-	_H11PORTC = 0x06;
-
-	// setup timer_interrupt to respond to real time interrupts with _VECTOR and TMSK2 here
-	_VECTOR(timer_interrupt, 13);
-	// setup real time interrupt rate for 32.77ms and the pulse accumulator to detect rising edges here
-	_H11PACTL |= 0x53;
-	// enable real time inturrupts
-	_H11TMSK2 |= 0x40;
-	_H11TFLG2 |= 0x40;
-
-	steer(LIM_CENTER);
-	_H11TOC5 = 100;
-}
-
 static int16
 sense_line(void)
 {
@@ -99,21 +72,21 @@ sense_line(void)
 	sense_diff = sense_l - sense_r;
 
 	if (sense_diff > 175) {
-		side = 'l';
-		lost_track = 0;
+		lost_side = 'l';
+		lost_track = false;
 	} else if (sense_diff < -175) {
-		side = 'r';
-		lost_track = 0;
+		lost_side = 'r';
+		lost_track = false;
 	}
 
 	if (abs(sense_diff) < 25 && abs(sense_l) + abs(sense_r) < 100)
-		lost_track = side;
+		lost_track = true;
 
 	return sense_diff;
 }
 
-static int16
-percent_to_pwm(int16 percent) INLINE
+static int16 INLINE
+percent_to_pwm(int16 percent)
 {
 	uint16 lim;
 	uint16 abs_percent;
@@ -176,6 +149,33 @@ timer_interrupt(void)
 	_H11TFLG2 |= 0x40;			// reset the real time interrupt flag
 
 	return;
+}
+
+static void
+init(void)
+{
+	_H11OC1M = 0x18; // TOC1 affects PA3 and PA4
+	_H11OC1D = 0x18; // TOC1 sets PA3 and PA4
+	_H11TOC1 = 0x00; // TOC1 occurs when _H11TCNT equals zero
+	_H11TCTL1 = 0x0A; // TOC5 clears PA3, TOC4 clears PA4
+
+	// Get port C set for all output, and set the drive motor to
+	// forward.
+	_H11DDRC  = 0xFF;
+	_H11PORTC = 0x06;
+
+	// setup timer_interrupt to respond to real time interrupts
+	// with _VECTOR and TMSK2 here
+	_VECTOR(timer_interrupt, 13);
+	// setup real time interrupt rate for 32.77ms and the pulse
+	// accumulator to detect rising edges here
+	_H11PACTL |= 0x53;
+	// enable real time inturrupts
+	_H11TMSK2 |= 0x40;
+	_H11TFLG2 |= 0x40;
+
+	steer(LIM_CENTER);
+	_H11TOC5 = 100;
 }
 
 int
