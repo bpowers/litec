@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define likely(x)   __builtin_expect(!!(x),1)
-#define __unused__    __attribute__ ((unused))
+#define likely(x) __builtin_expect(!!(x),1)
+#define __unused__  __attribute__ ((unused))
 #define INLINE __attribute__((always_inline))
 #define MAX_UINT16 (65435)
 
@@ -54,7 +54,7 @@ standby(void)
 
 	// wait for the slideswitch to turn back on...
 	while (standby_mode());
-	
+
 	_H11TMSK2 |= 0x40;	/* enable inturrupts	*/
 	_H11OC1M = 0x18;	/* TOC1 affects PA3 and PA4 */
 }
@@ -110,7 +110,7 @@ percent_to_pwm(int16 percent)
 static void
 steer(int16 percent)
 {
-	// Don't change if the pins about to toggle, bad things could happen
+	// bad things could happen if the pins are about to toggle
 	if (likely(abs(_H11TOC5 - _H11TCNT) > 100)) {
 		_H11TOC5 = percent_to_pwm(percent);;
 	}
@@ -141,12 +141,13 @@ drive(uint8 percent)
 __mod2__ void
 timer_interrupt(void)
 {
-	// set the value stored in _H11PACNT equal to the actual speed and reset _H11PACNT here
+	// set the value stored in _H11PACNT equal to the actual speed
+	// and reset _H11PACNT here
 	actual_speed = _H11PACNT;
 	_H11PACNT = 0;
 
-	new_speed = 1;				// this indicates that a new speed value is ready to be processed
-	_H11TFLG2 |= 0x40;			// reset the real time interrupt flag
+	new_speed = 1;
+	_H11TFLG2 |= 0x40; // reset the real time interrupt flag
 
 	return;
 }
