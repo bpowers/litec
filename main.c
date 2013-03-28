@@ -41,7 +41,7 @@ slideswitch_enabled(void)
 }
 
 static bool INLINE
-standby_mode(void)
+should_standby(void)
 {
 	return !slideswitch_enabled();
 }
@@ -49,14 +49,18 @@ standby_mode(void)
 static void
 standby(void)
 {
-	_H11TMSK2 &= ~0x40; /* disable inturrupts	*/
-	_H11OC1M = 0x00;	/* disable TOC1	*/
+	// disable interrupts
+	_H11TMSK2 &= ~0x40;
+	// disable TOC1
+	_H11OC1M = 0x00;
 
-	// wait for the slideswitch to turn back on...
-	while (standby_mode());
+	// busy wait for the slideswitch to be flipped back on...
+	while (should_standby());
 
-	_H11TMSK2 |= 0x40;	/* enable inturrupts	*/
-	_H11OC1M = 0x18;	/* TOC1 affects PA3 and PA4 */
+	// TOC1 affects PA3 and PA4
+	_H11OC1M = 0x18;
+	// enable interrupts
+	_H11TMSK2 |= 0x40;
 }
 
 static int16
@@ -191,7 +195,7 @@ main(void)
 	init();
 
 	while (true) {
-		if (standby_mode()) {
+		if (should_standby()) {
 			standby();
 			continue;
 		}
