@@ -1,86 +1,69 @@
-/* whole integrated system... boo yah! */
 #include <EVB.h>
-#include <stdlib.h>	/* needed for abs function*/
-#include <stdio.h>	/* needed for printf*/
+#include <stdio.h>
+#include <stdlib.h>
 
-//  ********************************  //
-//  CHANGE SPEED POT FROM PE3 TO PE4  //
-//  ********************************  //
+#define INLINE __attribute__((always_inline))
+#define MAX_UINT16 (65435)
 
-__mod2__ void timer_interrupt(void);
+typedef int32 long
+typedef uint16 unsigned int
+typedef int16 int
+typedef uint8 unsigned 
 
-void initialize( void );
+static volatile bool new_speed;
 
-int pushbutton( void );
-int slideswitch( void );
+static uint8 actual_speed;
+static uint8 prev_error;
 
-int otu( void );
+static uint8 lost_side;
+static uint8 lost_track;
 
-void steer( int steerpw );
-void drive( void );
-
-unsigned char actual_speed;
-unsigned char prev_error;
-
-unsigned char side;
-unsigned char lost_track;
+static const int16 DEFAULT_GAIN = 3;
 
 // Set the steering limits
-unsigned int limit_left = 2150;
-unsigned int limit_right = 3245;
-unsigned int limit_center = 2675;
+static const uint16 LIM_LEFT = 2150;
+static const uint16 LIM_RIGHT = 3245;
+static const uint16 LIM_CENTER = 2675;
 
 
-void main(void) { 
-
-	unsigned char drive_speed;
-	int multiplier = 3;
-	int drive_speed;
-
-	initialize();
-
-	while( 1 ){	
-
-		if ( slideswitch() ) {
-
-			if ( lost_track ) {
-
-				drive_speed = 75;
-
-				if ( lost_track == "l" )
-					steer( limit_left );
-				else
-					steer( limit_right );
-			} else {
-
-				drive_speed = 100;
-				steer( multiplier*otu() + limit_center );
-			}
-
-			if ( new_speed ) {
-
-				drive( 100 );
-				new_speed = 0;
-			}
-		} else {
-
-			_H11TMSK2 &= ~0x40; /* disable inturrupts	*/
-			_H11OC1M = 0x00;	/* disable TOC1	*/
-
-			// wait for the slideswitch to turn back on...
-			while ( !slideswitch() );
-			
-			_H11TMSK2 |= 0x40;	/* enable inturrupts	*/
-			_H11OC1M = 0x18;	/* TOC1 affects PA3 and PA4 */
-		}
-	}
-
-	return;
+static bool
+pushbutton_enabled(void) INLINE
+{
+	if (_H11PORTA & 0x01)
+		return true;
+	return false;
 }
 
+static bool
+slideswitch_enabled(void) INLINE
+{
+	if (_H11PORTA & 0x04)
+		return true;
+	return false;
+}
 
-void initialize(void) {
+static bool
+standby_mode(void) INLINE
+{
+	return !slideswitch_enabled();
+}
 
+static void
+standby(void)
+{
+	_H11TMSK2 &= ~0x40; /* disable inturrupts	*/
+	_H11OC1M = 0x00;	/* disable TOC1	*/
+
+	// wait for the slideswitch to turn back on...
+	while (standby_mode());
+	
+	_H11TMSK2 |= 0x40;	/* enable inturrupts	*/
+	_H11OC1M = 0x18;	/* TOC1 affects PA3 and PA4 */
+}
+
+static void
+init(void)
+{
 	_H11OC1M = 0x18;	/* TOC1 affects PA3 and PA4 */
 	_H11OC1D = 0x18;	/* TOC1 sets PA3 and PA4	*/
 	_H11TOC1 = 0x00;	/* TOC1 occurs when _H11TCNT equals zero */
@@ -90,7 +73,7 @@ void initialize(void) {
 	// Get port C set for all output, and set the drive motor to forward.
 	_H11DDRC  = 0xFF;
 	_H11PORTC = 0x06;
-	
+
 	// setup timer_interrupt to respond to real time interrupts with _VECTOR and TMSK2 here
 	_VECTOR(timer_interrupt, 13);
 	// setup real time interrupt rate for 32.77ms and the pulse accumulator to detect rising edges here
@@ -99,76 +82,92 @@ void initialize(void) {
 	_H11TMSK2 |= 0x40;
 	_H11TFLG2 |= 0x40;
 
-	steer( limit_center );
+	steer(LIM_CENTER);
 	_H11TOC5 = 100;
-
-	return;
 }
 
-
-int otu( void ) {
+static int16
+sense_line(void)
+{
+	int16 sense_l, sense_r, sense_diff;
 
 	_H11ADCTL = 0x14;
-	while ( !(_H11ADCTL & 0x80) );
+	while (!(_H11ADCTL & 0x80));
 
-	if ( (int)(_H11ADR2 - _H11ADR3) > 175 ) {
+	sense_l = _H11ADR2;
+	sense_r = _H11ADR3;
+	sense_diff = sense_l - sense_r;
+
+	if (sense_diff > 175) {
 		side = 'l';
 		lost_track = 0;
-	} else if ( (int)(_H11ADR2 - _H11ADR3) < (-175) ) {
+	} else if (sense_diff < -175) {
 		side = 'r';
 		lost_track = 0;
 	}
 
-	if ( (abs(_H11ADR2 - _H11ADR3) < 25) && ( ( abs(_H11ADR2) + abs(_H11ADR3) ) < 100 ) )
+	if (abs(sense_diff) < 25 && abs(sense_l) + abs(sense_r) < 100)
 		lost_track = side;
 
-	return ( _H11ADR2 - _H11ADR3 );
+	return sense_diff;
 }
 
+static int16
+percent_to_pwm(int16 percent) INLINE
+{
+	uint16 lim;
+	uint16 abs_percent;
 
-void steer( int steerpw ) {
+	if (percent == 0)
+		return LIM_CENTER;
 
+	if (percent < 0)
+		lim = LIM_LEFT;
+	else
+		lim = LIM_RIGHT;
+
+	// clamp to 100%
+	abs_percent = abs(percent);
+	if (abs_percent > 100)
+		abs_percent = 100;
+
+	return (lim - LIM_CENTER)*abs_percent + LIM_CENTER;
+}
+
+static void
+steer(int16 percent)
+{
 	// Don't change if the pins about to toggle, bad things could happen
-	if (abs(_H11TOC5 - _H11TCNT) > 100) { 
-
-		if ( steerpw > limit_right )
-			_H11TOC5 = limit_right;
-		else if ( steerpw < limit_left )
-			_H11TOC5 = limit_left;
-		else
-			_H11TOC5 = steerpw;
+	if (likely(abs(_H11TOC5 - _H11TCNT) > 100)) {
+		_H11TOC5 = percent_to_pwm(percent);;
 	}
-
-	return;
 }
 
-
-void drive( unsigned char percent ) {
-
-	long int temp_motorpw;
-	unsigned char error;
-
-	// TYPECAST
+static void
+drive(uint8 percent)
+{
+	int32 curr;
+	uint8 error;
 
 	error = (_H11ADR1 * percent)/300 - actual_speed;
 
-	temp_motorpw = _H11TOC5 + ( 300 * error ) - ( 100 * prev_error );
+	curr = _H11TOC5 + ( 300 * error ) - ( 100 * prev_error );
 	prev_error = error;
 
-	if( temp_motorpw > 65435 )
-		temp_motorpw = 65435;
-	else if( temp_motorpw < 100 )
-		temp_motorpw = 100;
+	if (curr > MAX_UINT16)
+		curr = MAX_UINT16;
+	else if (curr < 100)
+		curr = 100;
 
-	if( abs( motorpw - _H11TCNT ) > 100 )
-		motorpw = temp_motorpw;
+	if (abs(motorpw - _H11TCNT) > 100 )
+		motorpw = curr;
 
 	return;
 }
 
-
-__mod2__ void timer_interrupt( void ) {
-
+__mod2__ void
+timer_interrupt(void)
+{
 	// set the value stored in _H11PACNT equal to the actual speed and reset _H11PACNT here
 	actual_speed = _H11PACNT;
 	_H11PACNT = 0;
@@ -179,23 +178,41 @@ __mod2__ void timer_interrupt( void ) {
 	return;
 }
 
+int
+main(void)
+{
+	uint16 speed;
+	int16 gain;
+	int16 dir;
 
-int pushbutton( void ) {
+	gain = DEFAULT_GAIN;
 
-	// If the pushbutton is not pressed, then pa1 is high, so return false.
-	if ( _H11PORTA & 0x01 )
-		return 0;
+	init();
 
-	// Otherwise return true.
-	return 1;
-}
+	while (true) {
+		if (standby_mode()) {
+			standby();
+			continue;
+		}
 
+		dir = sense_line() * gain;
 
-int slideswitch( void ) {
+		if (lost_track) {
+			speed = 75;
+			if (lost_side == 'l')
+				dir = -100;
+			else
+				dir = 100;
+		} else {
+			speed = 100;
+		}
 
-	// If slideswitch is high, return true, otherwise false.
-	if ( _H11PORTA & 0x04 )
-		return 1;
+		if (new_speed) {
+			drive(speed);
+			new_speed = 0;
+		}
+		steer(dir);
+	}
 
 	return 0;
 }
