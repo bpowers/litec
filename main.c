@@ -8,7 +8,7 @@
 #define INLINE __attribute__((always_inline))
 #define MAX_UINT16 (65435)
 
-static volatile bool new_speed;
+static volatile bool have_new_speed;
 
 static uint8 actual_speed;
 static uint8 prev_error;
@@ -150,7 +150,7 @@ timer_interrupt(void)
 	actual_speed = _H11PACNT;
 	_H11PACNT = 0;
 
-	new_speed = 1;
+	have_new_speed = 1;
 	_H11TFLG2 |= 0x40; // reset the real time interrupt flag
 
 	return;
@@ -212,9 +212,9 @@ main(void)
 			speed = 100;
 		}
 
-		if (new_speed) {
+		if (have_new_speed) {
 			drive(speed);
-			new_speed = 0;
+			have_new_speed = false;
 		}
 		steer(dir);
 	}
