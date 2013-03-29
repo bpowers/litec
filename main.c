@@ -92,8 +92,8 @@ sense_line(void)
 static int16 INLINE
 percent_to_pwm(int16 percent)
 {
-	uint16 lim;
-	uint16 abs_percent;
+	int16 lim;
+	int16 abs_percent;
 
 	if (percent == 0)
 		return LIM_CENTER;
